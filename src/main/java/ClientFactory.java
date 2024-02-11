@@ -1,5 +1,5 @@
 public class ClientFactory {
-    private static final ClientFactory INSTANCE = new ClientFactory();
+    public static final ClientFactory INSTANCE = new ClientFactory();
     private static final int DEFAULT_TIMEOUT = 600;
 
     private ClientFactory() {
