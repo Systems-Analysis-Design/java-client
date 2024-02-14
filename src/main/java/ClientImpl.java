@@ -1,7 +1,4 @@
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import sse.EventStreamAdapter;
-import sse.HttpEventStreamClient;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -17,9 +14,7 @@ public class ClientImpl implements Client{
     private final HttpClient httpClient;
     private final String url;
     private final ObjectMapper mapper;
-    private final List<BiConsumer<String, byte[]>> functions = new ArrayList<>();
-    private Thread thread;
-    private HttpEventStreamClient client;
+    private final List<BiConsumer<String, byte[]>> subscribers = new ArrayList<>();
 
     public ClientImpl(final String url, final int timeout) {
         this.url = url;
@@ -39,10 +34,10 @@ public class ClientImpl implements Client{
                                                    .POST(HttpRequest.BodyPublishers.ofString(body))
                                                    .build();
             this.httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            this.notifySubscribers();
         } catch (Exception e) {
             System.out.println("push failed");
         }
-
     }
 
     @Override
@@ -65,50 +60,23 @@ public class ClientImpl implements Client{
 
     @Override
     public void subscribe(final BiConsumer<String, byte[]> function) {
-        this.functions.add(function);
-        if (this.client == null) {
-            initializeSSEClient();
-        }
-        if (this.thread == null) {
-//            this.thread = new Thread(this::waitForEvents);
-//            this.thread.start();
-        }
+        this.subscribers.add(function);
     }
 
     @Override
     public void close() {
-        this.client.stop();
+        this.subscribers.clear();
         this.httpClient.close();
     }
 
-    private void initializeSSEClient() {
-        this.client = new HttpEventStreamClient(this.url + "/subscribe", new EventStreamAdapter() {
-
-            private final ObjectMapper mapper = new ObjectMapper();
-
-            @Override
-            public void onEvent(HttpEventStreamClient client, HttpEventStreamClient.Event event) {
-                try {
-                    MessageInnerDto messageInnerDto = this.mapper.readValue(event.getData(), MessageInnerDto.class);
-                    callSubscribeFunctions(messageInnerDto.key(), messageInnerDto.value().getBytes(StandardCharsets.UTF_8));
-                } catch (JsonProcessingException e) {
-                    e.printStackTrace();
-                }
+    private void notifySubscribers(){
+        if (!this.subscribers.isEmpty()) {
+            BiConsumer<String, byte[]> first = this.subscribers.removeFirst();
+            MessageDto message = this.pull();
+            if (message.value() != null) {
+                first.accept(message.key(), message.value());
             }
-
-            @Override
-            public void onClose(HttpEventStreamClient client, HttpResponse<Void> response) {
-                System.out.println("SSE Client closed");
-            }
-
-        });
-        this.client.start().join();
-    }
-
-    private void waitForEvents() {
-    }
-
-    private void callSubscribeFunctions(String key, byte[] value) {
-        this.functions.forEach(x -> x.accept(key, value));
+            this.subscribers.add(first);
+        }
     }
 }
